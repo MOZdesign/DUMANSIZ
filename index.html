@@ -117,7 +117,7 @@ if(typeof module!=='undefined')module.exports={limitFor,intervalMs,compute,summa
 <!-- ===== ARAYÜZ ===== -->
 <script>
 const LS='dumansiz.v1';
-let S={cfg:null,log:[],keepAwake:false};
+let S={cfg:null,log:[],keepAwake:false,walk:true};
 try{const r=localStorage.getItem(LS);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 const save=()=>{try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}};
 const $=s=>document.querySelector(s), app=$('#app');
@@ -138,12 +138,12 @@ function beep(){
       os.start(audioCtx.currentTime+o);os.stop(audioCtx.currentTime+o+.15)});
   }catch(e){}
 }
-async function notify(title,body){
+async function notify(title,body,tag='dumansiz'){
   try{navigator.vibrate&&navigator.vibrate([300,150,300,150,300])}catch(e){}
   beep();
   try{
     if(!('Notification' in window)||Notification.permission!=='granted')return;
-    const opt={body,icon:'icon-192.png',tag:'dumansiz',renotify:true,requireInteraction:true,vibrate:[300,150,300]};
+    const opt={body,icon:'icon-192.png',tag,renotify:true,requireInteraction:true,vibrate:[300,150,300]};
     const reg=navigator.serviceWorker&&await navigator.serviceWorker.getRegistration();
     if(reg)await reg.showNotification(title,opt);else new Notification(title,opt);
   }catch(e){}
@@ -183,7 +183,8 @@ function setupView(edit){
   </div>
   <button class="pri" id="go">${edit?'Kaydet':'Başla'}</button>
   ${edit?`<div class="card"><button class="sm" id="tn">🔔 Bildirimi test et</button><div style="height:8px"></div>
-  <label style="display:flex;gap:10px;align-items:center;margin:0"><input type="checkbox" id="ka" style="width:22px;height:22px" ${S.keepAwake?'checked':''}> Uygulama açıkken ekranı uyanık tut (bildirim güvenilirliği için)</label></div>
+  <label style="display:flex;gap:10px;align-items:center;margin:0 0 12px"><input type="checkbox" id="wk" style="width:22px;height:22px" ${S.walk?'checked':''}> 🚶 Yürüyüş uyarısı: 08:00–23:30 arası her 30 dk'da bir "Kalk ve 5dk yürü"</label>
+  <label style="display:flex;gap:10px;align-items:center;margin:0"><input type="checkbox" id="ka"style="width:22px;height:22px" ${S.keepAwake?'checked':''}> Uygulama açıkken ekranı uyanık tut (bildirim güvenilirliği için)</label></div>
   <button class="bad sm" id="rs">Tüm verileri sıfırla</button>`:''}`;
   $('#go').onclick=async()=>{
     const v={n0:+$('#n0').value,nt:+$('#nt').value,days:+$('#days').value,wake:$('#wake').value,sleep:$('#sleep').value};
@@ -195,6 +196,7 @@ function setupView(edit){
   };
   if(edit){
     $('#tn').onclick=async()=>{await askPerm();notify('Dumansız','Test bildirimi 🚭');toast(('Notification' in window&&Notification.permission==='granted')?'Gönderildi':'Bildirim izni yok: ses/titreşim kullanılacak')};
+    $('#wk').onchange=e=>{S.walk=e.target.checked;save()};
     $('#ka').onchange=e=>{S.keepAwake=e.target.checked;save();setWake(S.keepAwake)};
     $('#rs').onclick=()=>{if(confirm('Tüm veriler silinsin mi?')){S.cfg=null;S.log=[];save();render()}};
   }
@@ -282,8 +284,22 @@ setInterval(()=>{
       notify('🚬 Sigara zamanı',`Bugün ${st.smoked}/${st.L}. Dayanabilirsen atla, sonraki aralık uzasın.`);
     }
   }
+  checkWalk(now);
   if(tab==='home'&&document.activeElement.tagName!=='INPUT'){app.innerHTML=homeView();bindHome()}
 },1000);
+
+/* --- yürüyüş uyarısı: 08:00–23:30 arası her 30 dk --- */
+let lastWalk='';
+function checkWalk(now){
+  if(S.walk===false)return;
+  const d=new Date(now),m=d.getHours()*60+d.getMinutes();
+  if(m<480||m>1410||m%30!==0)return;
+  const k=dateKey(now)+' '+m;
+  if(k===lastWalk)return;
+  lastWalk=k;
+  notify('🚶 Hareket zamanı','Kalk ve 5dk yürü','dumansiz-walk');
+  toast('Kalk ve 5dk yürü 🚶');
+}
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 render();
