@@ -40,6 +40,16 @@ th,td{padding:8px 4px;text-align:center;border-bottom:1px solid #334155}
 th{color:var(--mut);font-weight:500;font-size:12px}tr.cur td{background:#14532d55;font-weight:700}
 .hide{display:none}.tag{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--card2);font-size:12px;margin:2px}
 .due{animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.55}}
+.walkov{position:fixed;inset:0;z-index:99;background:rgba(15,23,42,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
+.walkov h2{font-size:30px;margin:0}.walkov button{max-width:320px}
+.walkov .stage{width:100%;max-width:360px;height:200px;position:relative;overflow:hidden;border-bottom:3px solid #334155}
+.walkov .man{position:absolute;bottom:0;left:0;width:90px;height:180px;animation:stroll 5s linear infinite}
+@keyframes stroll{from{transform:translateX(-100px)}to{transform:translateX(370px)}}
+.man line,.man circle{stroke:#22c55e;stroke-width:8;stroke-linecap:round;fill:none}
+.man .lg,.man .ar{transform-box:fill-box;transform-origin:50% 0}
+.man .l1,.man .a2{animation:sw .6s ease-in-out infinite alternate}
+.man .l2,.man .a1{animation:sw .6s ease-in-out infinite alternate-reverse}
+@keyframes sw{from{transform:rotate(-30deg)}to{transform:rotate(30deg)}}
 .toast{position:fixed;left:16px;right:16px;bottom:90px;background:#334155;padding:12px 14px;border-radius:12px;font-size:14px;text-align:center;z-index:9}
 </style>
 </head>
@@ -183,6 +193,7 @@ function setupView(edit){
   </div>
   <button class="pri" id="go">${edit?'Kaydet':'Başla'}</button>
   ${edit?`<div class="card"><button class="sm" id="tn">🔔 Bildirimi test et</button><div style="height:8px"></div>
+  <button class="sm" id="wt">🚶 Yürüyüş alarmını test et</button><div style="height:8px"></div>
   <label style="display:flex;gap:10px;align-items:center;margin:0 0 12px"><input type="checkbox" id="wk" style="width:22px;height:22px" ${S.walk?'checked':''}> 🚶 Yürüyüş uyarısı: 08:00–23:30 arası her 30 dk'da bir "Kalk ve 5dk yürü"</label>
   <label style="display:flex;gap:10px;align-items:center;margin:0"><input type="checkbox" id="ka"style="width:22px;height:22px" ${S.keepAwake?'checked':''}> Uygulama açıkken ekranı uyanık tut (bildirim güvenilirliği için)</label></div>
   <button class="bad sm" id="rs">Tüm verileri sıfırla</button>`:''}`;
@@ -197,6 +208,7 @@ function setupView(edit){
   if(edit){
     $('#tn').onclick=async()=>{await askPerm();notify('Dumansız','Test bildirimi 🚭');toast(('Notification' in window&&Notification.permission==='granted')?'Gönderildi':'Bildirim izni yok: ses/titreşim kullanılacak')};
     $('#wk').onchange=e=>{S.walk=e.target.checked;save()};
+    $('#wt').onclick=async()=>{await askPerm();walkAlarm()};
     $('#ka').onchange=e=>{S.keepAwake=e.target.checked;save();setWake(S.keepAwake)};
     $('#rs').onclick=()=>{if(confirm('Tüm veriler silinsin mi?')){S.cfg=null;S.log=[];save();render()}};
   }
@@ -298,7 +310,38 @@ function checkWalk(now){
   if(k===lastWalk)return;
   lastWalk=k;
   notify('🚶 Hareket zamanı','Kalk ve 5dk yürü','dumansiz-walk');
-  toast('Kalk ve 5dk yürü 🚶');
+  walkAlarm();
+}
+let walkStop=null;
+function walkAlarm(){
+  if(walkStop)walkStop();
+  const ov=document.createElement('div');ov.className='walkov';
+  ov.innerHTML=`<h2>Kalk ve 5dk yürü!</h2>
+  <div class="stage"><svg class="man" viewBox="0 0 90 180"><circle cx="45" cy="22" r="14"/><line x1="45" y1="38" x2="45" y2="105"/>
+  <line class="ar a1" x1="45" y1="52" x2="45" y2="95"/><line class="ar a2" x1="45" y1="52" x2="45" y2="95"/>
+  <line class="lg l1" x1="45" y1="105" x2="45" y2="172"/><line class="lg l2" x1="45" y1="105" x2="45" y2="172"/></svg></div>
+  <button class="pri" id="wkok">Tamam, yürüyorum</button>`;
+  document.body.appendChild(ov);
+  let g=null,timer=null;
+  try{
+    if(audioCtx){
+      audioCtx.resume&&audioCtx.resume();
+      g=audioCtx.createGain();g.gain.value=1;g.connect(audioCtx.destination);
+      const t0=audioCtx.currentTime;
+      for(let i=0;i<60;i++){const os=audioCtx.createOscillator(),eg=audioCtx.createGain();
+        os.frequency.value=i%2?660:880;eg.gain.value=.3;os.connect(eg);eg.connect(g);
+        os.start(t0+i*.5);os.stop(t0+i*.5+.35)}
+    }
+  }catch(e){}
+  const vib=()=>{try{navigator.vibrate&&navigator.vibrate([500,200,500,200,500,200,500])}catch(e){}};
+  vib();timer=setInterval(vib,3500);
+  walkStop=()=>{
+    clearInterval(timer);try{navigator.vibrate&&navigator.vibrate(0)}catch(e){}
+    try{g&&g.disconnect()}catch(e){}
+    ov.remove();walkStop=null;
+  };
+  $('#wkok').onclick=walkStop;
+  setTimeout(()=>{if(walkStop&&ov.isConnected)walkStop()},30000);
 }
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
