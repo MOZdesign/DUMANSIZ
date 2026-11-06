@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Dumansız</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--card2:#273449;--tx:#f1f5f9;--mut:#94a3b8;--ac:#22c55e;--wa:#f59e0b;--bad:#ef4444;--r:18px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,Roboto,sans-serif}
+body{min-height:100vh;padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+.wrap{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 2px}h2{font-size:17px;margin:18px 0 8px}
+.mut{color:var(--mut);font-size:14px}
+.card{background:var(--card);border-radius:var(--r);padding:16px;margin:12px 0}
+.row{display:flex;gap:10px}.row>*{flex:1}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+input{width:100%;padding:13px;border-radius:12px;border:1px solid #334155;background:var(--card2);color:var(--tx);font-size:17px}
+button{border:0;border-radius:14px;padding:15px;font-size:17px;font-weight:600;color:#fff;background:#334155;width:100%}
+button.pri{background:var(--ac);color:#052e16}button.warn{background:var(--wa);color:#451a03}button.bad{background:#7f1d1d}
+button.sm{padding:10px;font-size:14px;font-weight:500}
+button:active{transform:scale(.98)}
+.ring{position:relative;width:240px;height:240px;margin:8px auto}
+.ring svg{transform:rotate(-90deg)}
+.ring .in{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px}
+.big{font-size:42px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.stats b{display:block;font-size:26px}
+.stats span{font-size:12px;color:var(--mut)}
+.bar{height:8px;background:var(--card2);border-radius:99px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;background:var(--ac)}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#0b1220;border-top:1px solid #1e293b;padding-bottom:env(safe-area-inset-bottom)}
+nav a{flex:1;text-align:center;padding:12px 4px;font-size:12px;color:var(--mut);text-decoration:none}
+nav a b{display:block;font-size:20px}nav a.on{color:var(--ac)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 4px;text-align:center;border-bottom:1px solid #334155}
+th{color:var(--mut);font-weight:500;font-size:12px}tr.cur td{background:#14532d55;font-weight:700}
+.hide{display:none}.tag{display:inline-block;padding:3px 9px;border-radius:99px;background:var(--card2);font-size:12px;margin:2px}
+.due{animation:pulse 1.2s infinite}@keyframes pulse{50%{opacity:.55}}
+.toast{position:fixed;left:16px;right:16px;bottom:90px;background:#334155;padding:12px 14px;border-radius:12px;font-size:14px;text-align:center;z-index:9}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<nav id="nav" class="hide">
+  <a href="#" data-t="home" class="on"><b>🚭</b>Ana</a>
+  <a href="#" data-t="plan"><b>📅</b>Plan</a>
+  <a href="#" data-t="hist"><b>📊</b>Geçmiş</a>
+  <a href="#" data-t="set"><b>⚙️</b>Ayarlar</a>
+</nav>
+
+<!-- ===== ÇEKİRDEK MANTIK (UI'dan bağımsız) ===== -->
+<script id="core">
+const MIN=60000, DAY=86400000;
+const pad=n=>String(n).padStart(2,'0');
+const hm=s=>{const [h,m]=s.split(':').map(Number);return h*60+m};
+const dateKey=ts=>{const d=new Date(ts);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
+const parts=k=>k.split('-').map(Number);
+// "Gün", kalkış saatinde başlar: gece yarısından sonra da önceki günün penceresi sürer
+const dayKey=(c,ts)=>dateKey(ts-hm(c.wake)*MIN);
+const addDays=(k,n)=>{const [y,m,d]=parts(k);return dateKey(new Date(y,m-1,d+n,12).getTime())};
+const wakeTs=(c,k)=>{const [y,m,d]=parts(k);const w=hm(c.wake);return new Date(y,m-1,d,Math.floor(w/60),w%60).getTime()};
+const awakeMin=c=>{let a=hm(c.sleep)-hm(c.wake);if(a<=0)a+=1440;return a};
+const dayIdx=(a,b)=>{const [y1,m1,d1]=parts(a),[y2,m2,d2]=parts(b);return Math.round((Date.UTC(y2,m2-1,d2)-Date.UTC(y1,m1-1,d1))/DAY)};
+// Günlük limit: başlangıç adetinden hedefe, süre boyunca doğrusal azalır. Planın son günü hedefe ulaşır.
+function limitFor(c,d){
+  if(d<0)return c.n0;
+  if(d>=c.days)return c.nt;
+  return Math.max(c.nt,Math.round(c.n0-(c.n0-c.nt)*(d+1)/c.days));
+}
+// İçme aralığı = uyanık süre / günlük limit  → limit azaldıkça aralık uzar
+const intervalMs=(c,d)=>{const L=limitFor(c,d);return L>0?awakeMin(c)*MIN/L:null};
+function fmtDur(ms){
+  const m=Math.max(0,Math.round(ms/MIN));const h=Math.floor(m/60);
+  return h?`${h} sa ${m%60} dk`:`${m} dk`;
+}
+const fmtT=ts=>{const d=new Date(ts);return pad(d.getHours())+':'+pad(d.getMinutes())};
+
+// Anlık durum. log: [{ts,type:'smoked'|'skipped',slot}]
+function compute(c,log,now){
+  const key=dayKey(c,now), d=dayIdx(c.start,key), L=limitFor(c,d);
+  const A=awakeMin(c)*MIN, w=wakeTs(c,key), e=w+A;
+  const ent=log.filter(x=>dayKey(c,x.ts)===key);
+  const smoked=ent.filter(x=>x.type==='smoked').length;
+  const skipped=ent.filter(x=>x.type==='skipped').length;
+  const base={key,d,L,smoked,skipped,I:intervalMs(c,d),w,e};
+  const nextDay=()=>{
+    const k2=addDays(key,1),d2=d+1,L2=limitFor(c,d2);
+    return L2>0?wakeTs(c,k2)+A/L2:null;
+  };
+  if(L===0)return {...base,mode:'free',next:nextDay()};
+  if(now>=e)return {...base,mode:'sleep',next:nextDay()};
+  if(smoked>=L)return {...base,mode:'limit',next:nextDay()};
+  const I=A/L;
+  let t;
+  if(!ent.length)t=w+I;
+  else{const last=ent[ent.length-1];t=(last.type==='smoked'?last.ts:last.slot)+I}
+  if(t>e+MIN)return {...base,mode:'over',next:nextDay()};
+  return {...base,mode:now>=t?'due':'wait',next:t,prev:t-I};
+}
+// Gün bazlı özet
+function summarize(c,log,now){
+  const cur=dayKey(c,now), map={};
+  log.forEach(x=>{const k=dayKey(c,x.ts);(map[k]=map[k]||{key:k,smoked:0,skipped:0})[x.type==='smoked'?'smoked':'skipped']++});
+  map[cur]=map[cur]||{key:cur,smoked:0,skipped:0};
+  const days=Object.values(map).sort((a,b)=>a.key<b.key?1:-1);
+  days.forEach(x=>{x.L=limitFor(c,dayIdx(c.start,x.key));x.saved=Math.max(0,c.n0-x.smoked)});
+  const done=days.filter(x=>x.key<cur);
+  return {days,tSmoked:days.reduce((s,x)=>s+x.smoked,0),tSkipped:days.reduce((s,x)=>s+x.skipped,0),tSaved:done.reduce((s,x)=>s+x.saved,0)};
+}
+if(typeof module!=='undefined')module.exports={limitFor,intervalMs,compute,summarize,awakeMin,dayKey,wakeTs,fmtDur};
+</script>
+
+<!-- ===== ARAYÜZ ===== -->
+<script>
+const LS='dumansiz.v1';
+let S={cfg:null,log:[],keepAwake:false};
+try{const r=localStorage.getItem(LS);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
+const save=()=>{try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){}};
+const $=s=>document.querySelector(s), app=$('#app');
+let tab='home', lastNotif={t:0,at:0}, wl=null, audioCtx=null;
+
+function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2600)}
+
+/* --- bildirim / ses / titreşim --- */
+async function askPerm(){
+  try{if('Notification' in window&&Notification.permission==='default')await Notification.requestPermission()}catch(e){}
+  try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)()}catch(e){}
+}
+function beep(){
+  try{
+    if(!audioCtx)return;
+    [0,.25,.5].forEach(o=>{const os=audioCtx.createOscillator(),g=audioCtx.createGain();
+      os.frequency.value=880;g.gain.value=.25;os.connect(g);g.connect(audioCtx.destination);
+      os.start(audioCtx.currentTime+o);os.stop(audioCtx.currentTime+o+.15)});
+  }catch(e){}
+}
+async function notify(title,body){
+  try{navigator.vibrate&&navigator.vibrate([300,150,300,150,300])}catch(e){}
+  beep();
+  try{
+    if(!('Notification' in window)||Notification.permission!=='granted')return;
+    const opt={body,icon:'icon-192.png',tag:'dumansiz',renotify:true,requireInteraction:true,vibrate:[300,150,300]};
+    const reg=navigator.serviceWorker&&await navigator.serviceWorker.getRegistration();
+    if(reg)await reg.showNotification(title,opt);else new Notification(title,opt);
+  }catch(e){}
+}
+async function setWake(on){
+  try{
+    if(on&&'wakeLock' in navigator)wl=await navigator.wakeLock.request('screen');
+    else if(wl){await wl.release();wl=null}
+  }catch(e){toast('Ekran kilidi desteklenmiyor')}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.keepAwake)setWake(true)});
+
+/* --- eylemler --- */
+function act(type){
+  const st=compute(S.cfg,S.log,Date.now());
+  const now=Date.now();
+  let slot=now;
+  if(type==='skipped'&&st.next)slot=st.mode==='due'||st.mode==='wait'?st.next:now;
+  S.log.push({ts:now,type,slot});save();render();
+  if(type==='smoked')toast('Kaydedildi. Bir sonraki sigara uzatıldı.');
+  else toast('Harika! Bu sırayı atladın 💪');
+}
+function undo(){S.log.pop();save();render()}
+
+/* --- görünümler --- */
+function setupView(edit){
+  const c=S.cfg||{n0:20,nt:0,days:30,wake:'07:00',sleep:'23:00'};
+  app.innerHTML=`<h1>${edit?'Ayarlar':'Dumansız'}</h1>
+  <p class="mut">${edit?'Değişiklikler plana hemen uygulanır, geçmişin korunur.':'Sigarayı kademeli azalt, sonra bırak. Bilgileri gir, gerisini uygulama planlasın.'}</p>
+  <div class="card">
+    <div class="row"><div><label>Günlük içilen adet</label><input id="n0" type="number" min="1" inputmode="numeric" value="${c.n0}"></div>
+    <div><label>Hedef adet (0 = bırak)</label><input id="nt" type="number" min="0" inputmode="numeric" value="${c.nt}"></div></div>
+    <label>Hedefe ulaşma süresi (gün)</label><input id="days" type="number" min="1" inputmode="numeric" value="${c.days}">
+    <div class="row"><div><label>Kalkış saati</label><input id="wake" type="time" value="${c.wake}"></div>
+    <div><label>Yatış saati</label><input id="sleep" type="time" value="${c.sleep}"></div></div>
+    <p class="mut">Uyku saatleri düşülür; sigara zamanları yalnızca uyanık olduğun saatlere dağıtılır.</p>
+  </div>
+  <button class="pri" id="go">${edit?'Kaydet':'Başla'}</button>
+  ${edit?`<div class="card"><button class="sm" id="tn">🔔 Bildirimi test et</button><div style="height:8px"></div>
+  <label style="display:flex;gap:10px;align-items:center;margin:0"><input type="checkbox" id="ka" style="width:22px;height:22px" ${S.keepAwake?'checked':''}> Uygulama açıkken ekranı uyanık tut (bildirim güvenilirliği için)</label></div>
+  <button class="bad sm" id="rs">Tüm verileri sıfırla</button>`:''}`;
+  $('#go').onclick=async()=>{
+    const v={n0:+$('#n0').value,nt:+$('#nt').value,days:+$('#days').value,wake:$('#wake').value,sleep:$('#sleep').value};
+    if(!(v.n0>=1)||!(v.nt>=0)||v.nt>=v.n0)return toast('Hedef adet, mevcut adetten küçük olmalı');
+    if(!(v.days>=1)||!v.wake||!v.sleep||v.wake===v.sleep)return toast('Süre ve saatleri kontrol et');
+    await askPerm();
+    v.start=S.cfg?S.cfg.start:dayKey(v,Date.now());
+    S.cfg=v;save();tab='home';render();
+  };
+  if(edit){
+    $('#tn').onclick=async()=>{await askPerm();notify('Dumansız','Test bildirimi 🚭');toast(('Notification' in window&&Notification.permission==='granted')?'Gönderildi':'Bildirim izni yok: ses/titreşim kullanılacak')};
+    $('#ka').onchange=e=>{S.keepAwake=e.target.checked;save();setWake(S.keepAwake)};
+    $('#rs').onclick=()=>{if(confirm('Tüm veriler silinsin mi?')){S.cfg=null;S.log=[];save();render()}};
+  }
+}
+
+function homeView(){
+  const c=S.cfg,now=Date.now(),st=compute(c,S.log,now);
+  const R=108,C=2*Math.PI*R;let prog=0,big='',sub='',cls='',col='var(--ac)';
+  if(st.mode==='wait'){prog=Math.min(1,Math.max(0,(now-st.prev)/(st.next-st.prev)));
+    const ms=st.next-now,s=Math.floor(ms/1000);
+    big=s>=3600?`${Math.floor(s/3600)}:${pad(Math.floor(s/60)%60)}:${pad(s%60)}`:`${pad(Math.floor(s/60))}:${pad(s%60)}`;
+    sub=`Sıradaki: ${fmtT(st.next)}`}
+  else if(st.mode==='due'){prog=1;col='var(--wa)';big='ŞİMDİ';cls='due';sub=`Planlanan: ${fmtT(st.next)} · Atlayabilirsin`}
+  else if(st.mode==='free'){prog=1;big='🎉';sub='Bugün sigarasız gün!'}
+  else if(st.mode==='limit'){prog=1;col='var(--wa)';big='Limit';sub=`Bugünlük hak bitti. Yarın ilk: ${st.next?fmtT(st.next):'—'}`}
+  else if(st.mode==='over'){prog=1;big='Bitti';sub=`Bugün için zaman kalmadı. Yarın ilk: ${st.next?fmtT(st.next):'—'}`}
+  else{prog=1;big='😴';sub=`Uyku saati. Yarın ilk: ${st.next?fmtT(st.next):'—'}`}
+  const rem=Math.max(0,st.L-st.smoked);
+  const pl=Math.min(100,Math.round(Math.max(0,st.d)/c.days*100));
+  const iv=st.I?fmtDur(st.I):'—';
+  const sm=summarize(c,S.log,now);
+  return `<h1>Dumansız</h1>
+  <div class="mut">Gün ${Math.min(st.d+1,c.days)}${st.d>=c.days?' (hedef sürdürülüyor)':'/'+c.days} · limit ${st.L} · aralık ${iv}</div>
+  <div class="ring ${cls}"><svg width="240" height="240"><circle cx="120" cy="120" r="${R}" fill="none" stroke="#1e293b" stroke-width="14"/>
+  <circle cx="120" cy="120" r="${R}" fill="none" stroke="${col}" stroke-width="14" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-prog)}"/></svg>
+  <div class="in"><div class="big" style="${big.length>5?'font-size:34px':''}">${big}</div><div class="mut" style="margin-top:6px">${sub}</div></div></div>
+  <div class="row" style="margin-top:6px">
+    <button class="${st.mode==='due'?'warn':''}" id="sm">🚬 İçtim</button>
+    <button class="pri" id="sk" ${st.mode==='free'||st.mode==='sleep'?'disabled style="opacity:.4"':''}>💪 İçmedim</button>
+  </div>
+  <div class="card" style="margin-top:16px"><div class="stats">
+    <div><b>${st.smoked}</b><span>Bugün içilen</span></div>
+    <div><b style="color:var(--ac)">${st.skipped}</b><span>Bugün atlanan</span></div>
+    <div><b>${rem}</b><span>Kalan hak</span></div></div>
+    <div class="bar"><i style="width:${st.L?Math.min(100,st.smoked/st.L*100):0}%;${st.smoked>st.L?'background:var(--bad)':''}"></i></div></div>
+  <div class="card"><div class="stats">
+    <div><b>${sm.tSmoked}</b><span>Toplam içilen</span></div>
+    <div><b style="color:var(--ac)">${sm.tSkipped}</b><span>Toplam atlanan</span></div>
+    <div><b style="color:var(--ac)">${sm.tSaved}</b><span>Kazanılan</span></div></div>
+    <div class="mut" style="margin-top:10px">Plan ilerlemesi %${pl}</div><div class="bar"><i style="width:${pl}%"></i></div></div>
+  ${S.log.length?'<button class="sm" id="un">↩︎ Son kaydı geri al</button>':''}`;
+}
+function bindHome(){
+  $('#sm').onclick=()=>act('smoked');
+  const sk=$('#sk');if(sk&&!sk.disabled)sk.onclick=()=>act('skipped');
+  const u=$('#un');if(u)u.onclick=undo;
+}
+
+function planView(){
+  const c=S.cfg,cur=dayIdx(c.start,dayKey(c,Date.now()));
+  let rows='';
+  for(let d=0;d<=c.days;d++){
+    const L=limitFor(c,d),I=intervalMs(c,d);
+    rows+=`<tr class="${d===cur?'cur':''}"><td>${d+1}</td><td>${L}</td><td>${I?fmtDur(I):'—'}</td></tr>`;
+  }
+  return `<h1>Plan</h1><p class="mut">${c.n0} → ${c.nt} adet, ${c.days} günde. Uyanık süre: ${fmtDur(awakeMin(c)*MIN)} (${c.wake}–${c.sleep}).</p>
+  <div class="card"><table><tr><th>Gün</th><th>Limit</th><th>İki sigara arası</th></tr>${rows}</table></div>`;
+}
+function histView(){
+  const c=S.cfg,sm=summarize(c,S.log,Date.now());
+  const rows=sm.days.map(x=>`<tr><td>${x.key.slice(5).split('-').reverse().join('.')}</td><td>${x.smoked}/${x.L}</td><td>${x.skipped}</td><td>${x.saved}</td></tr>`).join('');
+  const recent=S.log.slice(-12).reverse().map(x=>`<span class="tag">${x.type==='smoked'?'🚬':'💪'} ${fmtT(x.ts)}</span>`).join('');
+  return `<h1>Geçmiş</h1><div class="card"><table><tr><th>Gün</th><th>İçilen/Limit</th><th>Atlanan</th><th>Kazanç</th></tr>${rows}</table>
+  <p class="mut">Kazanç = başlangıç adedi (${c.n0}) − o gün içilen.</p></div>
+  <h2>Son kayıtlar</h2><div>${recent||'<span class="mut">Henüz kayıt yok</span>'}</div>`;
+}
+
+function render(){
+  if(!S.cfg){$('#nav').classList.add('hide');return setupView(false)}
+  $('#nav').classList.remove('hide');
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.t===tab));
+  if(tab==='set')return setupView(true);
+  app.innerHTML=tab==='plan'?planView():tab==='hist'?histView():homeView();
+  if(tab==='home')bindHome();
+}
+document.querySelectorAll('nav a').forEach(a=>a.onclick=e=>{e.preventDefault();tab=a.dataset.t;render()});
+
+/* --- saniyelik döngü: geri sayım + bildirim --- */
+setInterval(()=>{
+  if(!S.cfg)return;
+  const now=Date.now(),st=compute(S.cfg,S.log,now);
+  if(st.mode==='due'){
+    if(lastNotif.t!==st.next||now-lastNotif.at>5*MIN){
+      lastNotif={t:st.next,at:now};
+      notify('🚬 Sigara zamanı',`Bugün ${st.smoked}/${st.L}. Dayanabilirsen atla, sonraki aralık uzasın.`);
+    }
+  }
+  if(tab==='home'&&document.activeElement.tagName!=='INPUT'){app.innerHTML=homeView();bindHome()}
+},1000);
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+render();
+if(S.cfg&&S.keepAwake)setWake(true);
+</script>
+</body>
+</html>
