@@ -107,7 +107,8 @@ function compute(c,log,now){
   const I=A/L;
   let t;
   if(!ent.length)t=w+I;
-  else{const last=ent[ent.length-1];t=(last.type==='smoked'?last.ts:last.slot)+I}
+  // Erken içilirse sıra kaymaz: sonraki = planlanan zaman + aralık (erken kalınan süre eklenir). Geç içilirse içilen andan sayılır.
+  else{const last=ent[ent.length-1];t=(last.type==='smoked'?Math.max(last.ts,last.slot||0):last.slot)+I}
   if(t>e+MIN)return {...base,mode:'over',next:nextDay()};
   return {...base,mode:now>=t?'due':'wait',next:t,prev:t-I};
 }
@@ -171,7 +172,8 @@ function act(type){
   const st=compute(S.cfg,S.log,Date.now());
   const now=Date.now();
   let slot=now;
-  if(type==='skipped'&&st.next)slot=st.mode==='due'||st.mode==='wait'?st.next:now;
+  if(st.next&&(st.mode==='due'||st.mode==='wait'))slot=st.next;
+  else if(type==='skipped'&&st.next)slot=now;
   S.log.push({ts:now,type,slot});save();render();
   if(type==='smoked')toast('Kaydedildi. Bir sonraki sigara uzatıldı.');
   else toast('Harika! Bu sırayı atladın 💪');
